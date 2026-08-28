@@ -33,7 +33,11 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # enablement: true 让 workflow 自己把 Pages 打开并设成 GitHub Actions 源，
+      # 省掉手动去 Settings → Pages 点一次（fork 本仓库的人也能直接部署）
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
