@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PID Control Lab · 交互式 PID 仿真实验室</title>
+<meta name="description" content="交互式 PID 仿真实验室：调 Kp/Ki/Kd 看响应曲线与超调量、循线小车仿真、真机日志回放与系统辨识、自动整定推荐参数。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎛️</text></svg>">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🎛️</span>
+    <div>
+      <h1>PID Control Lab</h1>
+      <p class="sub" data-i18n="app.sub">交互式 PID 仿真实验室 · 循线小车 / 真机日志 / 自动整定</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <label class="field inline">
+      <span data-i18n="preset.label">工况预设</span>
+      <select id="preset"></select>
+    </label>
+    <button class="btn ghost" id="btn-lang">EN</button>
+    <a class="btn ghost" id="btn-help" href="#help" data-i18n="nav.help">说明</a>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ───────── 侧栏：全局共享的控制器参数 ───────── -->
+  <aside class="sidebar">
+    <section class="panel">
+      <h2 data-i18n="gains.title">PID 增益</h2>
+      <div class="gain" data-gain="kp">
+        <div class="gain-head"><label>K<sub>p</sub></label><input type="number" id="kp-num" step="any"></div>
+        <input type="range" id="kp-rng">
+        <div class="gain-hint" data-i18n="gains.kpHint">比例：现在差多少 → 立刻纠多少。太大→震荡，太小→跟不上</div>
+      </div>
+      <div class="gain" data-gain="ki">
+        <div class="gain-head"><label>K<sub>i</sub></label><input type="number" id="ki-num" step="any"></div>
+        <input type="range" id="ki-rng">
+        <div class="gain-hint" data-i18n="gains.kiHint">积分：一直差一点 → 慢慢补上。消稳态误差，代价是超调与积分饱和</div>
+      </div>
+      <div class="gain" data-gain="kd">
+        <div class="gain-head"><label>K<sub>d</sub></label><input type="number" id="kd-num" step="any"></div>
+        <input type="range" id="kd-rng">
+        <div class="gain-hint" data-i18n="gains.kdHint">微分：正在快速逼近 → 提前松劲。抑制超调，但会放大传感器噪声</div>
+      </div>
+      <div class="row gap">
+        <button class="btn sm" id="btn-reset-gains" data-i18n="gains.reset">恢复预设</button>
+        <button class="btn sm" id="btn-zero-id" data-i18n="gains.zeroID">只留 P</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 data-i18n="ctrl.title">控制器实现</h2>
+      <label class="field">
+        <span data-i18n="ctrl.mode">离散化方式</span>
+        <select id="pid-mode">
+          <option value="standard" data-i18n="ctrl.modeStd">标准（∫e·dt，de/dt）</option>
+          <option value="arduino" data-i18n="ctrl.modeIno">Arduino（Σe，Δe）</option>
+        </select>
+      </label>
+      <div class="note" id="mode-note"></div>
+      <label class="field">
+        <span data-i18n="ctrl.ts">采样周期 T<sub>s</sub></span>
+        <span class="withunit"><input type="number" id="ts" step="0.001" min="0.001"><em>s</em></span>
+      </label>
+      <label class="field">
+        <span data-i18n="ctrl.imax">积分限幅 I_MAX</span>
+        <input type="number" id="imax" step="any">
+      </label>
+      <label class="field">
+        <span data-i18n="ctrl.aw">抗积分饱和</span>
+        <select id="antiwindup">
+          <option value="clamp" data-i18n="ctrl.awClamp">累加器限幅（.ino 的做法）</option>
+          <option value="conditional" data-i18n="ctrl.awCond">条件积分</option>
+          <option value="backcalc" data-i18n="ctrl.awBack">反算 back-calculation</option>
+          <option value="none" data-i18n="ctrl.awNone">不处理（看饱和现象）</option>
+        </select>
+      </label>
+      <label class="field">
+        <span data-i18n="ctrl.usat">输出限幅 ±u<sub>max</sub></span>
+        <input type="number" id="umax" step="any">
+      </label>
+      <label class="check"><input type="checkbox" id="d-on-meas"><span data-i18n="ctrl.dmeas">微分先行（对测量值求导）</span></label>
+      <label class="field">
+        <span data-i18n="ctrl.dsmooth">微分低通</span>
+        <input type="range" id="dsmooth" min="0" max="0.95" step="0.05">
+      </label>
+      <label class="field">
+        <span data-i18n="ctrl.spw">设定值加权 b</span>
+        <input type="range" id="spweight" min="0" max="1" step="0.05">
+      </label>
+    </section>
+
+    <section class="panel">
+      <h2 data-i18n="conv.title">增益换算</h2>
+      <p class="note" data-i18n="conv.note">同一个控制律，两种写法差一个 T<sub>s</sub>。换板子、改循环频率之前先看这里。</p>
+      <table class="mini" id="conv-table"></table>
+    </section>
+  </aside>
+
+  <!-- ───────── 主区 ───────── -->
+  <main class="main">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="step" data-i18n="tab.step">阶跃响应</button>
+      <button class="tab" data-tab="line" data-i18n="tab.line">循线小车</button>
+      <button class="tab" data-tab="replay" data-i18n="tab.replay">日志回放</button>
+      <button class="tab" data-tab="tune" data-i18n="tab.tune">自动整定</button>
+    </nav>
+
+    <!-- ── 阶跃响应 ── -->
+    <section class="tabpane active" id="pane-step">
+      <div class="toolbar">
+        <label class="field inline">
+          <span data-i18n="plant.type">被控对象</span>
+          <select id="plant-type">
+            <option value="heading" data-i18n="plant.heading">航向环（惯性+积分 · 循线实际对象）</option>
+            <option value="speed" data-i18n="plant.speed">转速环（一阶惯性）</option>
+            <option value="generic" data-i18n="plant.generic">通用二阶（ζ / ωn）</option>
+          </select>
+        </label>
+        <label class="field inline"><span>K</span><input type="number" id="p-K" step="any"></label>
+        <label class="field inline" data-for="tau"><span>τ (s)</span><input type="number" id="p-tau" step="0.01"></label>
+        <label class="field inline" data-for="wn"><span>ω<sub>n</sub></span><input type="number" id="p-wn" step="0.1"></label>
+        <label class="field inline" data-for="wn"><span>ζ</span><input type="number" id="p-zeta" step="0.05"></label>
+        <label class="field inline"><span data-i18n="plant.delay">纯延迟 (s)</span><input type="number" id="p-delay" step="0.005"></label>
+        <label class="field inline"><span data-i18n="plant.deadband">执行死区</span><input type="number" id="p-deadband" step="1"></label>
+        <label class="field inline"><span data-i18n="plant.noise">测量噪声 σ</span><input type="number" id="p-noise" step="0.001"></label>
+        <label class="field inline"><span data-i18n="plant.tend">仿真时长 (s)</span><input type="number" id="p-tend" step="0.5" min="0.5"></label>
+        <label class="check"><input type="checkbox" id="p-dist"><span data-i18n="plant.dist">中途加负载扰动</span></label>
+        <label class="check"><input type="checkbox" id="hold-ref"><span data-i18n="plant.hold">叠加对比曲线</span></label>
+        <button class="btn sm" id="btn-clear-ref" data-i18n="plant.clearRef">清除对比</button>
+      </div>
+
+      <div class="metrics" id="metrics"></div>
+
+      <div class="card">
+        <div class="card-head"><h3 data-i18n="chart.resp">响应曲线</h3><span class="hint" data-i18n="chart.hint">点图例可隐藏曲线 · 鼠标悬停读数</span></div>
+        <div class="canvas-wrap tall"><canvas id="chart-resp"></canvas></div>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <div class="card-head"><h3 data-i18n="chart.u">控制量与 P / I / D 分解</h3></div>
+          <div class="canvas-wrap"><canvas id="chart-u"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3 data-i18n="chart.err">误差</h3></div>
+          <div class="canvas-wrap"><canvas id="chart-e"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 循线小车 ── -->
+    <section class="tabpane" id="pane-line">
+      <div class="toolbar">
+        <label class="field inline">
+          <span data-i18n="line.robot">机器人</span>
+          <select id="line-profile">
+            <option value="arduino">Arduino 2WD · TCRT5000</option>
+            <option value="robomaster">RoboMaster EP · 摄像头</option>
+          </select>
+        </label>
+        <label class="field inline"><span data-i18n="line.track">赛道</span><select id="line-track"></select></label>
+        <label class="field inline" id="adc-field"><span data-i18n="line.adc">采样芯片</span>
+          <select id="line-adc">
+            <option value="uno">Arduino UNO 10-bit</option>
+            <option value="ads1115">ADS1115 16-bit</option>
+          </select>
+        </label>
+        <label class="field inline"><span data-i18n="line.speed">倍速</span>
+          <select id="line-speed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select>
+        </label>
+        <button class="btn primary" id="btn-run" data-i18n="line.run">▶ 开始</button>
+        <button class="btn" id="btn-reset-sim" data-i18n="line.reset">↺ 重置</button>
+        <label class="check"><input type="checkbox" id="show-sensors" checked><span data-i18n="line.showSensors">显示传感器</span></label>
+        <label class="check"><input type="checkbox" id="show-path" checked><span data-i18n="line.showPath">显示轨迹</span></label>
+      </div>
+
+      <div class="grid-line">
+        <div class="card">
+          <div class="card-head"><h3 data-i18n="line.view">赛道</h3><span class="hint" id="line-state"></span></div>
+          <div class="canvas-wrap track"><canvas id="track-cv"></canvas></div>
+        </div>
+        <div class="side-col">
+          <div class="metrics vertical" id="line-metrics"></div>
+          <div class="card">
+            <div class="card-head"><h3 data-i18n="line.sensors">传感器</h3></div>
+            <div id="sensor-bars" class="sensor-bars"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="card-head"><h3 data-i18n="line.cte">横向偏差 (mm)</h3></div>
+          <div class="canvas-wrap"><canvas id="chart-cte"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3 data-i18n="line.ctrl">误差与控制量</h3></div>
+          <div class="canvas-wrap"><canvas id="chart-linectrl"></canvas></div>
+        </div>
+      </div>
+
+      <details class="card collapsible">
+        <summary data-i18n="line.hw">车体与传感器参数（对着真机改）</summary>
+        <div class="toolbar wrap" id="hw-params"></div>
+      </details>
+    </section>
+
+    <!-- ── 日志回放 ── -->
+    <section class="tabpane" id="pane-replay">
+      <div class="dropzone" id="dropzone">
+        <p class="dz-title" data-i18n="replay.drop">把真机日志拖进来，或点击选择文件</p>
+        <p class="dz-sub" data-i18n="replay.formats">支持 Arduino 串口原样输出 · CSV · key=value · JSON</p>
+        <input type="file" id="file-input" accept=".log,.txt,.csv,.tsv,.json" hidden>
+        <div class="row gap center">
+          <button class="btn sm" data-sample="data/arduino_line_serial.log">示例：Arduino 串口</button>
+          <button class="btn sm" data-sample="data/arduino_line_fast.csv">示例：Arduino 20ms CSV</button>
+          <button class="btn sm" data-sample="data/robomaster_line.csv">示例：RoboMaster 30Hz</button>
+        </div>
+      </div>
+
+      <div id="replay-body" hidden>
+        <div class="toolbar">
+          <button class="btn primary" id="btn-play" data-i18n="replay.play">▶ 播放</button>
+          <button class="btn" id="btn-rewind">⏮</button>
+          <input type="range" id="scrub" min="0" max="100" value="0" class="grow">
+          <span class="mono" id="replay-time">0.00 s</span>
+          <label class="field inline"><span data-i18n="replay.ts">无时间戳时按</span>
+            <span class="withunit"><input type="number" id="replay-ts" step="1" min="1" value="200"><em>ms</em></span>
+          </label>
+          <button class="btn sm" id="btn-reparse" data-i18n="replay.reparse">重新解析</button>
+        </div>
+
+        <div class="metrics" id="replay-meta"></div>
+        <div id="replay-warn"></div>
+
+        <div class="card">
+          <div class="card-head"><h3 data-i18n="replay.rec">记录通道</h3><span class="hint" id="replay-state"></span></div>
+          <div class="canvas-wrap tall"><canvas id="chart-replay"></canvas></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3 data-i18n="replay.ident">系统辨识 → 换参数重仿真</h3>
+            <span class="hint" data-i18n="replay.identHint">从日志里拟合被控对象，再问"如果当时用另一组 PID 会怎样"</span>
+          </div>
+          <div class="toolbar">
+            <button class="btn primary" id="btn-ident" data-i18n="replay.doIdent">辨识被控对象</button>
+            <label class="check" title="循线对象物理上必然含积分（PWM 差 → 航向 → 横向偏差）。闭环日志里不加这个先验，最小二乘会把控制器的镇定效果算进对象里。">
+              <input type="checkbox" id="ident-integrator" checked>
+              <span data-i18n="replay.integrator">对象含积分环节</span>
+            </label>
+            <span class="mono dim" id="ident-info" data-i18n="replay.identNone">未辨识</span>
+          </div>
+          <div id="resim-box" hidden>
+            <div class="toolbar">
+              <button class="btn" id="btn-resim" data-i18n="replay.resim">用当前 PID 重仿真</button>
+              <button class="btn" id="btn-resim-tune" data-i18n="replay.resimTune">在这台车上自动整定</button>
+              <span class="mono dim" id="resim-info"></span>
+            </div>
+            <div class="canvas-wrap"><canvas id="chart-resim"></canvas></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 自动整定 ── -->
+    <section class="tabpane" id="pane-tune">
+      <div class="toolbar">
+        <label class="field inline"><span data-i18n="tune.obj">调优目标</span><select id="tune-obj"></select></label>
+        <label class="field inline"><span data-i18n="tune.on">整定对象</span>
+          <select id="tune-target">
+            <option value="plant" data-i18n="tune.onPlant">实验台被控对象</option>
+            <option value="line" data-i18n="tune.onLine">循线小车（整圈跑分）</option>
+          </select>
+        </label>
+        <button class="btn primary" id="btn-tune" data-i18n="tune.run">开始整定</button>
+        <span class="mono dim" id="tune-status"></span>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3 data-i18n="tune.cands">候选参数对比</h3>
+          <span class="hint" data-i18n="tune.candsHint">经典整定法给起点，数值寻优给终点，稳定裕度告诉你敢不敢用</span></div>
+        <div class="table-wrap"><table class="results" id="tune-table"></table></div>
+        <div id="tune-note"></div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="card-head"><h3 data-i18n="tune.cmp">响应对比</h3></div>
+          <div class="canvas-wrap tall"><canvas id="chart-tune"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3 data-i18n="tune.code">贴回代码</h3>
+            <button class="btn sm" id="btn-copy" data-i18n="tune.copy">复制</button></div>
+          <pre class="code" id="code-out"></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="tabpane-always" id="help">
+      <div class="card help">
+        <h3 data-i18n="help.title">这个实验室在仿什么</h3>
+        <div id="help-body"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

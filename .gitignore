@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+._*
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 真机抓下来的日志默认不入库（data/ 里三个示例日志除外）
+data/run_*.csv
+data/run_*.log
+data/my_*.csv
+data/my_*.log
+data/rm_run*.csv
+data/_*.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node（本项目无依赖，留着以防万一）
+node_modules/
