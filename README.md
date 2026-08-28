@@ -1,12 +1,16 @@
 # PID Control Lab
 
+[![Deploy to GitHub Pages](https://github.com/hanlinji4002/pid-control-lab/actions/workflows/pages.yml/badge.svg)](https://github.com/hanlinji4002/pid-control-lab/actions/workflows/pages.yml)
+[![在线体验](https://img.shields.io/badge/在线体验-hanlinji4002.github.io-4da3ff)](https://hanlinji4002.github.io/pid-control-lab/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-3fd68c.svg)](LICENSE)
+
 **交互式 PID 仿真实验室** —— 调 Kp/Ki/Kd，看超调量与稳态误差，仿真循线小车，
 导入真机日志做系统辨识与回放，再让它自动推荐一组参数。
 
 纯前端，无依赖，无构建步骤。
 
-> 🔗 **在线体验**：https://hanlinji4002.github.io/pid-control-lab/
-> （部署后可用；本地跑见下方[快速开始](#快速开始)）
+> 🔗 **在线体验**：<https://hanlinji4002.github.io/pid-control-lab/>
+> 本地跑见下方[快速开始](#快速开始)。
 
 ---
 
